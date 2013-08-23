@@ -1,6 +1,6 @@
 IOS_CC = xcrun -sdk iphoneos clang
 IOS_MIN_OS = 5.1
-IOS_SDK = 6.0
+IOS_SDK = 6.1
 OSX_MIN = 10.7
 
 CERT="iPhone Developer"

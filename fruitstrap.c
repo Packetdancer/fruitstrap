@@ -47,7 +47,7 @@ int AMDeviceSecureInstallApplication(int zero, AMDeviceRef device, CFURLRef url,
 int AMDeviceMountImage(AMDeviceRef device, CFStringRef image, CFDictionaryRef options, void *callback, int cbarg);
 int AMDeviceLookupApplications(AMDeviceRef device, int zero, CFDictionaryRef* result);
 
-bool found_device = false, debug = false, verbose = false, unbuffered = false;
+bool found_device = false, debug = false, verbose = false, unbuffered = false, skip_install = false;
 char *app_path = NULL;
 char *device_id = NULL;
 char *args = NULL;
@@ -471,7 +471,12 @@ void handle_device(AMDeviceRef device) {
 
     CFRetain(device); // don't know if this is necessary?
 
-    printf("[  0%%] Found device (%s), beginning install\n", CFStringGetCStringPtr(found_device_id, CFStringGetSystemEncoding()));
+	if (!skip_install) {
+	    printf("[  0%%] Found device (%s), beginning install\n", CFStringGetCStringPtr(found_device_id, CFStringGetSystemEncoding()));
+	}
+	else {
+	    printf("[    ] Found device (%s), skipping install\n", CFStringGetCStringPtr(found_device_id, CFStringGetSystemEncoding()));
+	}
 
     AMDeviceConnect(device);
     assert(AMDeviceIsPaired(device));
@@ -488,7 +493,8 @@ void handle_device(AMDeviceRef device) {
     assert(AMDeviceStartService(device, CFSTR("com.apple.afc"), &afcFd, NULL) == 0);
     assert(AMDeviceStopSession(device) == 0);
     assert(AMDeviceDisconnect(device) == 0);
-    assert(AMDeviceTransferApplication(afcFd, path, NULL, transfer_callback, NULL) == 0);
+    if (!skip_install)
+	    assert(AMDeviceTransferApplication(afcFd, path, NULL, transfer_callback, NULL) == 0);
 
     close(afcFd);
 
@@ -501,25 +507,32 @@ void handle_device(AMDeviceRef device) {
     assert(AMDeviceValidatePairing(device) == 0);
     assert(AMDeviceStartSession(device) == 0);
 
-    service_conn_t installFd;
-    assert(AMDeviceStartService(device, CFSTR("com.apple.mobile.installation_proxy"), &installFd, NULL) == 0);
+    if (!skip_install) {
+		service_conn_t installFd;
+		assert(AMDeviceStartService(device, CFSTR("com.apple.mobile.installation_proxy"), &installFd, NULL) == 0);
 
-    assert(AMDeviceStopSession(device) == 0);
-    assert(AMDeviceDisconnect(device) == 0);
+		assert(AMDeviceStopSession(device) == 0);
+		assert(AMDeviceDisconnect(device) == 0);
 
-    mach_error_t result = AMDeviceInstallApplication(installFd, path, options, install_callback, NULL);
-    if (result != 0)
-    {
-       printf("AMDeviceInstallApplication failed: %d\n", result);
-        exit(1);
-    }
+		mach_error_t result = AMDeviceInstallApplication(installFd, path, options, install_callback, NULL);
+		if (result != 0)
+		{
+		   printf("AMDeviceInstallApplication failed: %d\n", result);
+			exit(1);
+		}
 
-    close(installFd);
+		close(installFd);
+	}
+	else {
+		assert(AMDeviceStopSession(device) == 0);
+		assert(AMDeviceDisconnect(device) == 0);	
+	}
 
     CFRelease(path);
     CFRelease(options);
 
-    printf("[100%%] Installed package %s\n", app_path);
+	if (!skip_install)
+	    printf("[100%%] Installed package %s\n", app_path);
 
     if (!debug) exit(0); // no debug phase
 
@@ -583,7 +596,7 @@ void timeout_callback(CFRunLoopTimerRef timer, void *info) {
 }
 
 void usage(const char* app) {
-    printf("usage: %s [-d/--debug] [-i/--id device_id] -b/--bundle bundle.app [-a/--args arguments] [-t/--timeout timeout(seconds)] [-u/--unbuffered] [-g/--gdbargs gdbarguments]\n", app);
+    printf("usage: %s [-d/--debug] [-i/--id device_id] -b/--bundle bundle.app [-r/--runonly] [-a/--args arguments] [-t/--timeout timeout(seconds)] [-u/--unbuffered] [-g/--gdbargs gdbarguments]\n", app);
 }
 
 int main(int argc, char *argv[]) {
@@ -596,11 +609,12 @@ int main(int argc, char *argv[]) {
         { "timeout", required_argument, NULL, 't' },
         { "unbuffered", no_argument, NULL, 'u' },
         { "gbdbargs", required_argument, NULL, 'g' },
+        { "no-install", no_argument, NULL, 'n' },
         { NULL, 0, NULL, 0 },
     };
     char ch;
 
-    while ((ch = getopt_long(argc, argv, "dvi:b:a:t:u:g:", longopts, NULL)) != -1)
+    while ((ch = getopt_long(argc, argv, "dvni:b:a:t:u:g:", longopts, NULL)) != -1)
     {
         switch (ch) {
         case 'd':
@@ -627,6 +641,9 @@ int main(int argc, char *argv[]) {
         case 'g':
             gdb_args = optarg;
             break;
+        case 'n':
+        	skip_install = 1;
+        	break;
         default:
             usage(argv[0]);
             return 1;
